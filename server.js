@@ -1,11 +1,20 @@
 const express = require('express');
-const mysql = require('mysql2/promise');
+const { Pool, types } = require('pg');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const path = require('path');
+const fs = require('fs');
+
+// Load DATABASE_URL from .env when running locally (Vercel provides it as an environment variable)
+try {
+    process.loadEnvFile();
+} catch {}
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
+
+// Return DATE columns as 'YYYY-MM-DD' strings instead of timezone-shifted JS Dates
+types.setTypeParser(types.builtins.DATE, (value) => value);
 
 // Middleware
 app.use(cors());
@@ -13,15 +22,15 @@ app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ limit: '10mb', extended: true }));
 app.use(express.static(path.join(__dirname)));
 
-// MySQL Connection Pool
-const pool = mysql.createPool({
-    host: 'localhost',
-    user: 'root',           // Default XAMPP user
-    password: '',           // Default XAMPP password (empty)
-    database: 'post',
-    waitForConnections: true,
-    connectionLimit: 10,
-    queueLimit: 0
+// Supabase Postgres Connection Pool (via Supabase transaction pooler)
+if (!process.env.DATABASE_URL) {
+    console.error('DATABASE_URL is not set. Add it to .env locally or to the Vercel project environment variables.');
+}
+
+// Supabase signs its pooler certificate with its own root CA, so trust that CA explicitly
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { ca: fs.readFileSync(path.join(__dirname, 'supabase-ca.crt'), 'utf8') }
 });
 
 // Routes
@@ -31,11 +40,11 @@ app.get('/', (req, res) => {
 
 // POST endpoint to create ticket
 app.post('/api/tickets', async (req, res) => {
-    let connection;
-    
+    let client;
+
     try {
         const { project, ticket } = req.body;
-        
+
         // Validate required fields
         if (!project || !ticket) {
             return res.status(400).json({
@@ -43,27 +52,29 @@ app.post('/api/tickets', async (req, res) => {
                 message: 'Missing project or ticket data'
             });
         }
-        
-        connection = await pool.getConnection();
-        
+
+        client = await pool.connect();
+
         // Start transaction
-        await connection.beginTransaction();
-        
+        await client.query('BEGIN');
+
         // Insert Project (or get existing)
-        const [projectRows] = await connection.query(
-            `INSERT INTO projects (name, url, api_url) VALUES (?, ?, ?)
-             ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id)`,
+        const projectResult = await client.query(
+            `INSERT INTO projects (name, url, api_url) VALUES ($1, $2, $3)
+             ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+             RETURNING id`,
             [project.name, project.url, project.api_url]
         );
-        const projectId = projectRows.insertId || projectRows[0]?.id;
-        
+        const projectId = projectResult.rows[0].id;
+
         // Insert Ticket
-        const [ticketResult] = await connection.query(
+        const ticketResult = await client.query(
             `INSERT INTO tickets (
                 project_id, ticket_no, type, platform, module, submodule,
                 date_detected, current_state, desired_state, purpose, status,
                 remarks, page_url, reporter_name, reporter_role
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            RETURNING id`,
             [
                 projectId,
                 ticket.ticket_no,
@@ -82,15 +93,15 @@ app.post('/api/tickets', async (req, res) => {
                 ticket.reporter.role
             ]
         );
-        
-        const ticketId = ticketResult.insertId;
-        
+
+        const ticketId = ticketResult.rows[0].id;
+
         // Insert Evidence (if provided)
         if (ticket.evidence && ticket.evidence.length > 0) {
             for (const evidence of ticket.evidence) {
-                await connection.query(
+                await client.query(
                     `INSERT INTO evidence (ticket_id, name, size, uploaded_at, url)
-                     VALUES (?, ?, ?, ?, ?)`,
+                     VALUES ($1, $2, $3, $4, $5)`,
                     [
                         ticketId,
                         evidence.name,
@@ -101,20 +112,20 @@ app.post('/api/tickets', async (req, res) => {
                 );
             }
         }
-        
+
         // Commit transaction
-        await connection.commit();
-        
+        await client.query('COMMIT');
+
         res.status(201).json({
             success: true,
             message: 'Ticket created successfully',
             ticket_id: ticketId,
             project_id: projectId
         });
-        
+
     } catch (error) {
-        if (connection) {
-            await connection.rollback();
+        if (client) {
+            await client.query('ROLLBACK');
         }
         console.error('Error creating ticket:', error);
         res.status(500).json({
@@ -122,52 +133,52 @@ app.post('/api/tickets', async (req, res) => {
             message: 'Error creating ticket: ' + error.message
         });
     } finally {
-        if (connection) {
-            await connection.releaseConnection();
+        if (client) {
+            client.release();
         }
     }
 });
 
 // GET endpoint to retrieve all tickets (bonus)
 app.get('/api/tickets', async (req, res) => {
-    let connection;
-    
+    let client;
+
     try {
         const limit = parseInt(req.query.limit) || 100;
         const offset = parseInt(req.query.offset) || 0;
-        
-        connection = await pool.getConnection();
-        
+
+        client = await pool.connect();
+
         // Get tickets with related data
-        const [tickets] = await connection.query(
+        const { rows: tickets } = await client.query(
             `SELECT t.*, p.name as project_name, p.url as project_url, p.api_url
              FROM tickets t
              LEFT JOIN projects p ON t.project_id = p.id
              ORDER BY t.created_at DESC
-             LIMIT ? OFFSET ?`,
+             LIMIT $1 OFFSET $2`,
             [limit, offset]
         );
-        
+
         // Get total count
-        const [countResult] = await connection.query(
-            'SELECT COUNT(*) as total FROM tickets'
+        const { rows: countResult } = await client.query(
+            'SELECT COUNT(*)::int as total FROM tickets'
         );
-        
+
         // Get evidence for each ticket
         const ticketsWithEvidence = await Promise.all(
             tickets.map(async (ticket) => {
-                const [evidence] = await connection.query(
-                    'SELECT name, size, uploaded_at, url FROM evidence WHERE ticket_id = ?',
+                const { rows: evidence } = await client.query(
+                    'SELECT name, size, uploaded_at, url FROM evidence WHERE ticket_id = $1',
                     [ticket.id]
                 );
-                
+
                 return {
                     ...ticket,
                     evidence: evidence || []
                 };
             })
         );
-        
+
         res.json({
             project: {
                 name: tickets[0]?.project_name || 'Unknown',
@@ -179,7 +190,7 @@ app.get('/api/tickets', async (req, res) => {
             offset: offset,
             tickets: ticketsWithEvidence
         });
-        
+
     } catch (error) {
         console.error('Error fetching tickets:', error);
         res.status(500).json({
@@ -187,47 +198,54 @@ app.get('/api/tickets', async (req, res) => {
             message: 'Error fetching tickets: ' + error.message
         });
     } finally {
-        if (connection) {
-            await connection.releaseConnection();
+        if (client) {
+            client.release();
         }
     }
 });
 
 // GET single ticket by ID
 app.get('/api/tickets/:id', async (req, res) => {
-    let connection;
-    
+    let client;
+
     try {
-        connection = await pool.getConnection();
-        
-        const [tickets] = await connection.query(
+        if (!/^\d+$/.test(req.params.id)) {
+            return res.status(404).json({
+                success: false,
+                message: 'Ticket not found'
+            });
+        }
+
+        client = await pool.connect();
+
+        const { rows: tickets } = await client.query(
             `SELECT t.*, p.name as project_name, p.url as project_url, p.api_url
              FROM tickets t
              LEFT JOIN projects p ON t.project_id = p.id
-             WHERE t.id = ?`,
+             WHERE t.id = $1`,
             [req.params.id]
         );
-        
+
         if (tickets.length === 0) {
             return res.status(404).json({
                 success: false,
                 message: 'Ticket not found'
             });
         }
-        
+
         const ticket = tickets[0];
-        
+
         // Get evidence
-        const [evidence] = await connection.query(
-            'SELECT name, size, uploaded_at, url FROM evidence WHERE ticket_id = ?',
+        const { rows: evidence } = await client.query(
+            'SELECT name, size, uploaded_at, url FROM evidence WHERE ticket_id = $1',
             [ticket.id]
         );
-        
+
         res.json({
             ...ticket,
             evidence: evidence || []
         });
-        
+
     } catch (error) {
         console.error('Error fetching ticket:', error);
         res.status(500).json({
@@ -235,8 +253,8 @@ app.get('/api/tickets/:id', async (req, res) => {
             message: 'Error fetching ticket: ' + error.message
         });
     } finally {
-        if (connection) {
-            await connection.releaseConnection();
+        if (client) {
+            client.release();
         }
     }
 });
@@ -252,7 +270,7 @@ app.listen(PORT, () => {
 ╔════════════════════════════════════════════════╗
 ║   Ticket Management System Server              ║
 ║   Running on http://localhost:${PORT}           ║
-║   Database: MySQL (post) via XAMPP             ║
+║   Database: Supabase (PostgreSQL)              ║
 ╚════════════════════════════════════════════════╝
 
 📝 API Endpoints:
