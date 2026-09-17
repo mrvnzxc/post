@@ -20,7 +20,7 @@ types.setTypeParser(types.builtins.DATE, (value) => value);
 app.use(cors());
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ limit: '10mb', extended: true }));
-app.use(express.static(path.join(__dirname)));
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Supabase Postgres Connection Pool (via Supabase transaction pooler)
 if (!process.env.DATABASE_URL) {
@@ -35,7 +35,7 @@ const pool = new Pool({
 
 // Routes
 app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // POST endpoint to create ticket

@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tickets · MoBilis</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <header class="masthead">
+        <div class="wrap">
+            <div class="masthead-top">
+                <div>
+                    <p class="eyebrow">MoBilis Ticket Management</p>
+                    <h1>Tickets</h1>
+                </div>
+                <button class="btn btn-on-dark" id="refreshBtn" type="button">Refresh</button>
+            </div>
+            <div class="endpoint">
+                <span class="endpoint-label">New tickets arrive through</span>
+                <code class="endpoint-url"><span class="method">POST</span> <span id="endpointUrl"></span></code>
+                <button class="btn btn-on-dark btn-small" id="copyBtn" type="button">Copy URL</button>
+            </div>
+        </div>
+    </header>
+
+    <main class="wrap">
+        <div class="toolbar">
+            <div class="filters" id="filters" role="group" aria-label="Filter by status"></div>
+            <label class="search">
+                <span class="visually-hidden">Search tickets</span>
+                <input type="search" id="search" placeholder="Search ticket no, module, reporter…" autocomplete="off">
+            </label>
+        </div>
+
+        <p class="summary" id="summary" aria-live="polite">Loading tickets…</p>
+        <div class="list" id="list"></div>
+        <div class="more">
+            <button class="btn" id="moreBtn" type="button" hidden>Load more</button>
+        </div>
+    </main>
+
+    <script src="/script.js"></script>
+</body>
+</html>
