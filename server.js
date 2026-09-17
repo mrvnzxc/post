@@ -259,6 +259,55 @@ app.get('/api/tickets/:id', async (req, res) => {
     }
 });
 
+// PATCH endpoint to update a ticket's status
+const TICKET_STATUSES = ['open', 'in_progress', 'resolved', 'closed'];
+
+app.patch('/api/tickets/:id', async (req, res) => {
+    try {
+        if (!/^\d+$/.test(req.params.id)) {
+            return res.status(404).json({
+                success: false,
+                message: 'Ticket not found'
+            });
+        }
+
+        const { status } = req.body || {};
+
+        if (!TICKET_STATUSES.includes(status)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Status must be one of: ' + TICKET_STATUSES.join(', ')
+            });
+        }
+
+        const { rows } = await pool.query(
+            `UPDATE tickets SET status = $1 WHERE id = $2
+             RETURNING id, ticket_no, status, updated_at`,
+            [status, req.params.id]
+        );
+
+        if (rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Ticket not found'
+            });
+        }
+
+        res.json({
+            success: true,
+            message: 'Status updated',
+            ticket: rows[0]
+        });
+
+    } catch (error) {
+        console.error('Error updating ticket status:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error updating ticket status: ' + error.message
+        });
+    }
+});
+
 // Health check
 app.get('/api/health', (req, res) => {
     res.json({ status: 'Server is running on port ' + PORT });
@@ -277,6 +326,7 @@ app.listen(PORT, () => {
    POST   /api/tickets        - Create a new ticket
    GET    /api/tickets        - Get all tickets
    GET    /api/tickets/:id    - Get single ticket
+   PATCH  /api/tickets/:id    - Update ticket status
    GET    /api/health         - Health check
    GET    /                   - Web interface
 

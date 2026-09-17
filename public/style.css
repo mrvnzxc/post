@@ -432,15 +432,87 @@ h1 {
     background: currentColor;
 }
 
-.status-open { background: var(--open-bg); color: var(--open); }
-.status-in_progress { background: var(--progress-bg); color: var(--progress); }
-.status-resolved { background: var(--resolved-bg); color: var(--resolved); }
+.pill.status-open { background: var(--open-bg); color: var(--open); }
+.pill.status-in_progress { background: var(--progress-bg); color: var(--progress); }
+.pill.status-resolved { background: var(--resolved-bg); color: var(--resolved); }
 
 /* Expanded ticket */
 
 .ticket-body {
     border-top: 1px dashed var(--line);
     padding: 20px 24px 24px calc(var(--stub-w) + 24px);
+}
+
+.status-row {
+    margin-bottom: 20px;
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--line);
+}
+
+.status-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.status-option {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font: 500 13px/1 var(--font-body);
+    padding: 8px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    color: var(--ink);
+    cursor: pointer;
+}
+
+.status-option::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--closed);
+}
+
+.status-option.status-open::before { background: var(--open); }
+.status-option.status-in_progress::before { background: var(--progress); }
+.status-option.status-resolved::before { background: var(--resolved); }
+
+.status-option:hover:not(:disabled) {
+    border-color: var(--ink);
+}
+
+.status-option[aria-pressed="true"] {
+    font-weight: 600;
+    border-color: currentColor;
+    cursor: default;
+}
+
+.status-option[aria-pressed="true"].status-open { background: var(--open-bg); color: var(--open); }
+.status-option[aria-pressed="true"].status-in_progress { background: var(--progress-bg); color: var(--progress); }
+.status-option[aria-pressed="true"].status-resolved { background: var(--resolved-bg); color: var(--resolved); }
+.status-option[aria-pressed="true"].status-closed { background: var(--closed-bg); color: var(--closed); }
+
+.status-option[aria-pressed="true"]::before {
+    background: currentColor;
+}
+
+.status-option:disabled {
+    opacity: 0.6;
+    cursor: progress;
+}
+
+.status-message {
+    min-height: 20px;
+    margin-top: 8px;
+    font-size: 13px;
+    color: var(--resolved);
+}
+
+.status-message.is-error {
+    color: #B91C1C;
 }
 
 .fields {

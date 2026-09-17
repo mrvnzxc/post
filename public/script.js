@@ -23,6 +23,8 @@ const state = {
     status: 'all',
     query: '',
     openIds: new Set(),
+    savingIds: new Set(),
+    statusMessages: new Map(),
     error: null,
     loaded: false
 };
@@ -44,7 +46,7 @@ endpointEl.textContent = endpointUrl;
 function el(tag, props = {}, ...children) {
     const node = document.createElement(tag);
     for (const [key, value] of Object.entries(props)) {
-        if (value === undefined || value === null) continue;
+        if (value === undefined || value === null || value === false) continue;
         if (key === 'className') node.className = value;
         else if (key === 'text') node.textContent = value;
         else node.setAttribute(key, value);
@@ -290,11 +292,102 @@ function ticketBody(ticket) {
         );
     }
 
+    const updated = ticket.updated_at && ticket.updated_at !== ticket.created_at
+        ? ` · Last updated ${formatDateTime(ticket.updated_at)}`
+        : '';
+
     return el('div', { className: 'ticket-body' },
+        statusControl(ticket),
         fields,
         links,
-        el('p', { className: 'received', text: `Received ${formatDateTime(ticket.created_at)}` })
+        el('p', { className: 'received', text: `Received ${formatDateTime(ticket.created_at)}${updated}` })
     );
+}
+
+function statusControl(ticket) {
+    const saving = state.savingIds.has(ticket.id);
+    const message = state.statusMessages.get(ticket.id);
+
+    const group = el('div', {
+        className: 'status-options',
+        role: 'group',
+        'aria-label': `Status of ${ticket.ticket_no}`
+    });
+
+    for (const { value, label } of STATUSES.filter((s) => s.value !== 'all')) {
+        const button = el('button', {
+            className: `status-option status-${value}`,
+            type: 'button',
+            'aria-pressed': String(ticket.status === value),
+            'data-ticket-id': ticket.id,
+            'data-status': value,
+            disabled: saving
+        }, label);
+
+        button.addEventListener('click', () => updateStatus(ticket.id, value));
+        group.append(button);
+    }
+
+    return el('div', { className: 'status-row' },
+        el('p', { className: 'links-label', text: 'Status' }),
+        group,
+        el('p', {
+            className: `status-message${message?.error ? ' is-error' : ''}`,
+            'aria-live': 'polite',
+            text: message?.text || ''
+        })
+    );
+}
+
+async function updateStatus(ticketId, status) {
+    const ticket = state.tickets.find((t) => t.id === ticketId);
+    if (!ticket || ticket.status === status || state.savingIds.has(ticketId)) return;
+
+    state.savingIds.add(ticketId);
+    document.querySelectorAll(`[data-ticket-id="${ticketId}"]`).forEach((button) => {
+        button.disabled = true;
+    });
+
+    let message;
+
+    try {
+        const response = await fetch(`${API_URL}/${ticketId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status })
+        });
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+            throw new Error(data.message || `The server responded with ${response.status}`);
+        }
+
+        const current = state.tickets.find((t) => t.id === ticketId);
+        if (current) {
+            current.status = data.ticket.status;
+            current.updated_at = data.ticket.updated_at;
+        }
+        message = { text: `Status changed to ${statusLabel(status)}` };
+    } catch (error) {
+        message = { text: `Status not changed: ${error.message}`, error: true };
+    } finally {
+        state.savingIds.delete(ticketId);
+    }
+
+    state.statusMessages.set(ticketId, message);
+    setTimeout(() => {
+        if (state.statusMessages.get(ticketId) !== message) return;
+        state.statusMessages.delete(ticketId);
+        document.querySelectorAll(`[data-ticket-id="${ticketId}"]`)[0]
+            ?.closest('.status-row')
+            ?.querySelector('.status-message')
+            ?.replaceChildren();
+    }, 4000);
+
+    render();
+
+    const current = state.tickets.find((t) => t.id === ticketId);
+    document.querySelector(`[data-ticket-id="${ticketId}"][data-status="${current?.status}"]`)?.focus();
 }
 
 function retryButton() {
